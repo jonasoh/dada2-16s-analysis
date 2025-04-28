@@ -137,10 +137,6 @@ if (has_sample_data) {
     sample.names <- rownames(seqtab.nochim)
     
     cat(sprintf("   Keeping %d samples after filtering.\n", length(samples_to_keep)))
-    
-    # remove the filter column from sample_data
-    sample_data <- sample_data[, !colnames(sample_data) %in% params$sample_filter_column, drop=FALSE]
-    cat("   Removed filter column from sample data.\n")
   }
 
   if (!params$sample_type_column %in% colnames(sample_data) || 
