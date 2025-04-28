@@ -1,0 +1,781 @@
+---
+title: "Relative Abundance Analysis from DADA2 Output"
+author: "Jonas Ohlsson"
+date: today
+format:
+  html:
+    toc: true
+    code-fold: false
+    fig-width: 10
+    fig-height: 7
+execute:
+  warning: true
+  message: true
+params:
+  input_dir: "/Users/j/Documents/Gasfermentering/RISE/16S data"
+  taxonomic_level: "genus"
+  # color the bubble plot according to this taxonomic rank
+  bubble_plot_taxonomic_level_color: "phylum"
+  min_abundance: 0.025
+  # do we want to agglomerate taxa at the specified level?
+  agglomerate: true
+  # include title and subtitle in plot?
+  plot_titles: true
+  # should we rename e.g., Methanobacteriales_2 to Methanobacteriales (2)?
+  clean_names: true
+  # file with additional sample metadata
+  #   structure of the file:
+  #   sample name in first column, metadata in other columns
+  sample_data_file: "sample_data.xlsx"
+  sample_type_column: "Substrate" # column containing the faceting variable
+  sample_sort_column: "Date"      # column containing the sorting variable
+  sample_filter_column: "Include" # use this column for filtering
+  sample_filter_value: "Yes"      # only plot samples which have this value in the "filter" column
+---
+
+## Parameters
+
+This analysis uses the following parameters that can be modified when rendering:
+
+```{r display-params}
+# ensure taxonomic level is lowercase
+params$taxonomic_level <- tolower(params$taxonomic_level)
+params$bubble_plot_taxonomic_level_color <- tolower(params$bubble_plot_taxonomic_level_color)
+
+# check for spelling errors
+tax_ranks_ordered <- c("kingdom", "phylum", "class", "order", "family", "genus", "species")
+
+if (!params$taxonomic_level %in% tax_ranks_ordered) {
+  stop("Invalid taxonomic rank for aggregation!")
+}
+if (!params$bubble_plot_taxonomic_level_color %in% tax_ranks_ordered) {
+  stop("Invalid taxonomic rank for bubble plot coloring!")
+}
+
+# display current parameter settings
+params
+```
+
+The optional sample data (e.g., `sample_data.xlsx`) file has sample name in the first column, and sample "type" and "sorting" columns using the names set in the parameters section.
+
+## Setup
+
+Load required packages for the analysis:
+
+```{r setup}
+# load required packages (install if necessary)
+install_if_needed <- function(pkg, bioc = FALSE) {
+  if (!requireNamespace(pkg, quietly = TRUE)) {
+    if (bioc) {
+      if (!requireNamespace("BiocManager", quietly = TRUE))
+        install.packages("BiocManager")
+      BiocManager::install(pkg)
+    } else {
+      install.packages(pkg)
+    }
+  }
+  library(pkg, character.only = TRUE)
+}
+
+# install and load packages
+install_if_needed('phyloseq', bioc=TRUE)
+install_if_needed('ggplot2')
+install_if_needed('dplyr')
+install_if_needed('purrr')
+install_if_needed('Polychrome')
+install_if_needed('tibble')
+install_if_needed('readxl')
+install_if_needed('stringr')
+
+cat("All packages loaded successfully.\n")
+```
+
+## Load Data
+
+Loading data from the specified directory:
+
+```{r load-data}
+input_dir <- params$input_dir
+
+seqtab.nochim <- readRDS(file.path(input_dir, 'seqtab.nochim.rds'))
+taxa <- readRDS(file.path(input_dir, 'taxa.rds'))
+sample.names <- rownames(seqtab.nochim)
+
+# load the sample data if requested and check formatting
+has_sample_data <- length(params$sample_data_file)
+if (has_sample_data) {
+  sample_data <- read_excel(file.path(input_dir, params$sample_data_file))
+
+  # take the first column of the sample_data file and put it into rownames instead
+  sample_data <- column_to_rownames(sample_data, var = colnames(sample_data)[1])
+
+  # ensure sample order matches seqtab.nochim
+  if (!all(rownames(sample_data) %in% sample.names)) {
+    warning("Some sample names in sample data don't match the sequence table.")
+  }
+
+  # match the sample data to the sequence table order
+  prev_sample_data <- sample_data
+  sample_data <- sample_data[match(sample.names, rownames(sample_data)), ]
+  
+  if (length(prev_sample_data[,1]) != length(sample_data[,1])) {
+    stop("Some samples in the sample data file are not present in the sequence table. The sample data file and the sequence data must match.")
+  }
+
+  # apply filtering if sample_filter_column is specified
+  if (!is.null(params$sample_filter_column) && params$sample_filter_column %in% colnames(sample_data)) {
+    cat(sprintf("* Filtering samples based on '%s' column with value '%s'...\n", 
+                params$sample_filter_column, params$sample_filter_value))
+    
+    # get samples to keep
+    samples_to_keep <- rownames(sample_data)[sample_data[[params$sample_filter_column]] == params$sample_filter_value]
+    
+    # filter sequence table
+    seqtab.nochim <- seqtab.nochim[rownames(seqtab.nochim) %in% samples_to_keep, ]
+    
+    # update sample names
+    sample.names <- rownames(seqtab.nochim)
+    
+    cat(sprintf("   Keeping %d samples after filtering.\n", length(samples_to_keep)))
+    
+    # remove the filter column from sample_data
+    sample_data <- sample_data[, !colnames(sample_data) %in% params$sample_filter_column, drop=FALSE]
+    cat("   Removed filter column from sample data.\n")
+  }
+
+  if (!params$sample_type_column %in% colnames(sample_data) || 
+      !params$sample_sort_column %in% colnames(sample_data)) {
+    stop(paste("Required columns not found in sample data file.",
+               "Looking for:", params$sample_type_column, 
+               "and", params$sample_sort_column))
+  }
+  
+  sample_data  # display sample data if we have it
+}
+```
+
+## Create the Phyloseq Object
+
+Here we'll create the `phyloseq` object containing the OTU/ASV table and taxonomic data needed for plotting. If we have additional sample data from the `sample_data.xlsx` file, it goes into this object as well.
+
+```{r phyloseq-object}
+if (has_sample_data) {
+  ps <- phyloseq(otu_table(seqtab.nochim, taxa_are_rows=FALSE), 
+                 sample_data(sample_data), tax_table(taxa))
+} else {
+  ps <- phyloseq(otu_table(seqtab.nochim, taxa_are_rows=FALSE), tax_table(taxa))
+}
+ps
+```
+
+## Filter
+
+In this cell, we prepare the data. Counts are converted to relative abundances, low-abundance taxa are grouped into the "Minor taxa" group, and abundant taxa are agglomerated (clustering several ASVs which have the same classification). We also clean up the names for plotting later.
+
+```{r filter-aggregate-taxa}
+# set the taxonomic level and abundance threshold for analysis
+tax_level <- params$taxonomic_level
+min_abund_threshold <- params$min_abundance
+
+cat(paste0("\n--- Filtering and Aggregation at ", tax_level, " level (Threshold: ", min_abund_threshold * 100, "%) ---\n"))
+
+### transform counts to relative abundance
+cat("* Calculating relative abundance for all taxa...\n")
+ps_rel <- transform_sample_counts(ps, function(x) x / sum(x))
+
+### identify abundant taxa
+#   - abundance threshold is max per sample, i.e.,
+#     it's enough for a taxon to be above the threshold in a single sample
+cat(paste0("* Identifying taxa with max relative abundance >= ", 
+           min_abund_threshold * 100, "% in any sample...\n"))
+abund_mat <- as(otu_table(ps_rel), "matrix") # convert otu table to matrix
+if (ncol(abund_mat) == 0) stop("Abundance matrix has no taxa after initial steps.")
+
+# handle case where there's only one sample
+if (nrow(abund_mat) == 1) {
+  max_abundance_per_taxon <- abund_mat[1, ]
+} else {
+  max_abundance_per_taxon <- apply(abund_mat, 2, max) # max abundance per taxon (column)
+}
+
+# extract abundant OTUs
+abundant_taxa_otus <- names(max_abundance_per_taxon[max_abundance_per_taxon >= min_abund_threshold])
+cat(sprintf("   Found %d OTUs/ASVs meeting the threshold out of %d total.\n",
+            length(abundant_taxa_otus), ntaxa(ps_rel)))
+
+### pruning
+cat("* Pruning phyloseq object to keep only these abundant taxa...\n")
+# handle case where no taxa meet the threshold
+if (length(abundant_taxa_otus) == 0) {
+  warning("No taxa met the abundance threshold. Plot will only show 'Minor taxa'.")
+  ps_rel_abundant_only <- NULL
+} else {
+  ps_rel_abundant_only <- prune_taxa(abundant_taxa_otus, ps_rel)
+  cat(sprintf("   Pruned object contains %d taxa.\n", ntaxa(ps_rel_abundant_only)))
+}
+
+
+### agglomeration
+#   here we join similar ASVs for a cleaner plot
+cat(sprintf("* Agglomerating abundant taxa at the '%s' level...\n", tax_level))
+if (params$agglomerate && !is.null(ps_rel_abundant_only)) {
+  # ensure the taxonomic level exists in the analysis object
+  if (!tax_level %in% rank_names(ps_rel_abundant_only)) {
+      stop(paste("Taxonomic rank", tax_level, "not found in taxonomy table."))
+  }
+
+  # Perform agglomeration - NArm=FALSE keeps taxa with NA at the target rank
+  ps_merged_abundant <- tax_glom(ps_rel_abundant_only, taxrank = tax_level, NArm = FALSE)
+  cat(sprintf("   Agglomerated into %d groups at the %s level.\n", ntaxa(ps_merged_abundant), tax_level))
+} else if (!params$agglomerate) {
+  cat("   Skipping agglomeration as params$agglomerate == false.")
+  ps_merged_abundant <- ps_rel_abundant_only
+} else {
+  ps_merged_abundant <- NULL # No abundant taxa to agglomerate
+  cat("   Skipping agglomeration as no taxa met the threshold.\n")
+}
+
+### cleaning up display names
+cat("* Generating unique display names for agglomerated taxa groups...\n")
+if (!is.null(ps_merged_abundant)) {
+    tax_table_merged_mat <- as(tax_table(ps_merged_abundant), "matrix")
+    tax_table_merged <- as_tibble(tax_table_merged_mat, rownames = "OTU_ID") # keep original OTU IDs from tax_glom
+
+    # filter to ranks actually present in the data
+    tax_ranks_present <- intersect(tax_ranks_ordered, colnames(tax_table_merged))
+    
+    # clean names - clean_name(name)
+    #
+    # this function converts the _123 suffix to (123), if desired.
+    clean_name <- function(name) {
+      if (params$clean_names) {
+        str_replace(name, "_(\\d+)$", " (\\1)")
+      } else {
+        name
+      }
+    }
+
+    # create display names - get_display_name(tax_row, target_level, all_ranks)
+    # 
+    # this function looks for the lowest rank with an identifier. 
+    # i.e., for a species without an identification at the specified level,
+    # (for example "genus"), the resulting name might be "Bacillota (phylum)" or
+    # "Planococcaceae (family)".
+    get_display_name <- function(tax_row, target_level, all_ranks) {
+        target_val <- tax_row[[target_level]]
+        target_rank_idx <- which(all_ranks == target_level)
+
+        # check whether we have an identification at the specified rank
+        if (is.na(target_val) || target_val == "") {
+            # find the closest higher rank that IS classified
+            higher_rank_val <- NA
+            higher_rank_name <- NA
+            if (target_rank_idx > 1) {
+                for (i in (target_rank_idx - 1):1) {
+                    rank_to_check <- all_ranks[i]
+                    val_to_check <- tax_row[[rank_to_check]]
+                    if (!is.na(val_to_check) && val_to_check != "") {
+                        higher_rank_val <- val_to_check
+                        higher_rank_name <- rank_to_check
+                        break  # found it
+                    }
+                }
+            }
+            # construct name: "HigherRankName (rank)"
+            return(paste0(clean_name(higher_rank_val), " (", higher_rank_name, ")"))
+        } else {
+            # target level is classified, just return its value
+            return(clean_name(target_val))
+        }
+    }
+
+    tax_table_merged$display_name <- apply(tax_table_merged, 1, get_display_name, target_level = tax_level, all_ranks = tax_ranks_present)
+
+    # if agglomeration was skipped, ASVs with the same classification might have the same display name.
+    # we need to make them unique before assigning them as taxa_names.
+    if (!params$agglomerate) {
+        cat("   Agglomeration skipped, ensuring unique display names for individual ASVs...\n")
+        # check for duplicate display names generated
+        name_counts <- table(tax_table_merged$display_name)
+        duplicated_names <- names(name_counts[name_counts > 1])
+
+        if (length(duplicated_names) > 0) {
+            cat(sprintf("      Found %d display names shared by multiple ASVs. Appending suffix for uniqueness.\n", length(duplicated_names)))
+            # iterate through rows and append OTU_ID if the display_name is duplicated
+            tax_table_merged <- tax_table_merged %>%
+              group_by(display_name) %>%
+              # add a unique suffix (_1, _2, etc.) only if the display name is duplicated
+              mutate(
+                n_in_group = n(),
+                unique_suffix = if_else(n_in_group > 1, paste0("_", row_number()), "")
+              ) %>%
+              ungroup() %>%
+              mutate(display_name = paste0(display_name, unique_suffix)) %>%
+              select(-n_in_group, -unique_suffix)
+            cat("      Appended OTU IDs to duplicated names.\n")
+        } else {
+            cat("      All generated display names are already unique.\n")
+        }
+    }
+
+    # create a mapping from original OTU_ID to new (potentially modified) display name
+    name_map <- setNames(tax_table_merged$display_name, tax_table_merged$OTU_ID)
+
+    # apply the new names to the phyloseq object
+    taxa_names(ps_merged_abundant) <- name_map[taxa_names(ps_merged_abundant)]
+    cat(sprintf("   Assigned %d unique display names.\n", length(taxa_names(ps_merged_abundant))))
+} else {
+    cat("   Skipping display name generation.\n")
+}
+
+
+### prepare the data for plotting
+cat("* Melting agglomerated abundant taxa data (if any)...\n")
+if (!is.null(ps_merged_abundant)) {
+    ps_merged_abundant_df <- psmelt(ps_merged_abundant)
+    # ensure Abundance is numeric
+    ps_merged_abundant_df$Abundance <- as.numeric(ps_merged_abundant_df$Abundance)
+
+    # add taxonomic rank for bubble plot coloring
+    bubble_color_rank <- params$bubble_plot_taxonomic_level_color
+    if (bubble_color_rank %in% colnames(ps_merged_abundant_df)) {
+        # rename the column to avoid conflicts and make it generic
+        bubble_color_col_name <- paste0("bubble_color_", bubble_color_rank)
+        ps_merged_abundant_df[[bubble_color_col_name]] <- ps_merged_abundant_df[[bubble_color_rank]]
+        cat(sprintf("   Added column '%s' for bubble plot coloring based on rank '%s'.\n", bubble_color_col_name, bubble_color_rank))
+    } else {
+        warning(paste(
+          "Bubble plot coloring rank '", bubble_color_rank, 
+          "' not found in taxonomy data. Coloring will default to OTU name."))
+        bubble_color_col_name <- "OTU" # fallback to OTU if rank not found
+    }
+
+    cat(sprintf("   Melted data has %d rows.\n", nrow(ps_merged_abundant_df)))
+} else {
+    # create an empty dataframe with expected columns if no abundant taxa
+    expected_cols <- c("Sample", "OTU", "Abundance")
+    bubble_color_rank <- params$bubble_plot_taxonomic_level_color
+    bubble_color_col_name <- paste0("bubble_color_", bubble_color_rank) # define even if empty
+    expected_cols <- c(expected_cols, bubble_color_col_name) # add color column name
+
+    if (has_sample_data) {
+        # add sample data columns that exist in the original sample_data
+        sample_data_cols <- colnames(sample_data(ps))
+        expected_cols <- c(expected_cols, intersect(c(params$sample_type_column, params$sample_sort_column), sample_data_cols))
+    }
+    ps_merged_abundant_df <- data.frame(matrix(ncol = length(expected_cols), nrow = 0))
+    colnames(ps_merged_abundant_df) <- expected_cols
+    # ensure correct types
+    ps_merged_abundant_df <- ps_merged_abundant_df %>%
+        mutate(Sample = as.character(Sample),
+               OTU = as.character(OTU),
+               Abundance = as.numeric(Abundance),
+               # use !! operator to use the value of the variable as the column name
+               !!bubble_color_col_name := as.character(.data[[bubble_color_col_name]]))
+
+    if (has_sample_data) {
+        if(params$sample_type_column %in% colnames(ps_merged_abundant_df)) {
+          # sorting column type might vary, handle later during plotting
+          ps_merged_abundant_df[[params$sample_type_column]] <- factor()
+        }
+    }
+    cat("   No abundant taxa data to melt.\n")
+}
+
+
+### add the "minor taxa" group
+cat("* Calculating abundance of minor taxa (sum of all taxa below threshold)...\n")
+# sum the abundances of the *agglomerated abundant* taxa for each sample
+if (nrow(ps_merged_abundant_df) > 0) {
+    total_abundant_per_sample <- ps_merged_abundant_df %>%
+      group_by(Sample) %>%
+      summarize(total_abundant = sum(Abundance, na.rm = TRUE), .groups = 'drop')
+} else {
+    # if no abundant taxa, their sum is 0 for all samples
+    all_samples <- sample_names(ps)
+    total_abundant_per_sample <- tibble(Sample = all_samples, total_abundant = 0.0)
+}
+
+# create the "minor taxa" group
+minor_taxa_label <- paste0("Minor taxa (<", min_abund_threshold * 100, "%)")
+minor_taxa_df <- total_abundant_per_sample %>%
+  mutate(OTU = minor_taxa_label, Abundance = 1.0 - total_abundant) %>%
+  select(Sample, OTU, Abundance)
+
+# add the bubble color column to minor taxa df
+minor_taxa_color_group_label <- "Minor Taxa Group" # specific label for coloring
+minor_taxa_df[[bubble_color_col_name]] <- minor_taxa_color_group_label
+
+
+# add sample data columns to minor_taxa_df if sample_data exists
+if (has_sample_data) {
+  sample_data_df_orig <- as_tibble(sample_data(ps), rownames = "Sample")
+  # keep only relevant sample data columns
+  sample_data_to_join <- sample_data_df_orig %>% 
+    select(Sample, any_of(c(params$sample_type_column, params$sample_sort_column)))
+  minor_taxa_df <- minor_taxa_df %>%
+    left_join(sample_data_to_join, by = "Sample")
+}
+
+
+### combine abundant and minor taxa dfs
+cat("* Combining abundant and minor taxa into a single dataframe for plotting...\n")
+# ensure both dataframes have the same essential columns before binding
+common_cols <- c("Sample", "OTU", "Abundance", bubble_color_col_name)
+if (has_sample_data) {
+    # get column names that actually exist in the original sample data
+    existing_sample_cols <- intersect(c(params$sample_type_column, params$sample_sort_column), colnames(sample_data(ps)))
+    common_cols <- unique(c(common_cols, existing_sample_cols))
+}
+
+# select common columns, ensuring they exist in both dataframes
+# need to handle case where ps_merged_abundant_df might not have the bubble color column if fallback occurred
+if (!bubble_color_col_name %in% colnames(ps_merged_abundant_df)) {
+    # if the color column doesn't exist (e.g., fallback to OTU), create it from OTU
+    ps_merged_abundant_df[[bubble_color_col_name]] <- ps_merged_abundant_df[["OTU"]]
+}
+ps_merged_abundant_df_select <- ps_merged_abundant_df %>% select(any_of(common_cols))
+minor_taxa_df_select <- minor_taxa_df %>% select(any_of(common_cols))
+
+# combine
+combined_df <- bind_rows(ps_merged_abundant_df_select, minor_taxa_df_select)
+
+# ensure the bubble color column is treated as a factor for coloring
+combined_df[[bubble_color_col_name]] <- factor(combined_df[[bubble_color_col_name]])
+
+
+cat(sprintf("   Final combined dataframe has %d rows.\n", nrow(combined_df)))
+
+
+cat("--- Filtering and Aggregation Complete ---\n")
+```
+
+## Plot
+
+```{r plot-relative-abundance}
+cat("\n--- Plotting Relative Abundance ---\n")
+
+# ensure combined_df exists and has data
+if (!exists("combined_df") || nrow(combined_df) == 0) {
+  stop("The combined dataframe for plotting is empty. Check filtering steps.")
+}
+
+### generate the palettes
+#   we're using Polychrome::createPalette() to make a good palette for this type of data.
+#   see https://cran.r-project.org/web/packages/Polychrome/vignettes/creatingPalettes.html
+if (!is.null(ps_merged_abundant) && nrow(ps_merged_abundant_df) > 0) {
+    # sort abundant taxa by overall mean abundance for consistent ordering
+    mean_abund_sorted_taxa <- ps_merged_abundant_df %>%
+        filter(OTU != minor_taxa_label) %>% # probably not needed
+        group_by(OTU) %>%
+        summarize(mean_abundance = mean(Abundance, na.rm = TRUE), .groups = 'drop') %>%
+        arrange(desc(mean_abundance)) %>%
+        pull(OTU)
+    abundant_taxa_names <- mean_abund_sorted_taxa
+} else {
+    abundant_taxa_names <- character(0) # no abundant taxa
+}
+ntaxa_abundant <- length(abundant_taxa_names)
+cat(sprintf("* Preparing color palette for %d abundant taxa groups (barplot).\n", ntaxa_abundant))
+
+
+# Polychrome claims it can generate at least 38 distinguishable colors
+# - if you need more then you're probably plotting your data wrong!
+if (ntaxa_abundant > 38) {
+  warning(paste("High number of abundant taxa groups (", ntaxa_abundant,
+                "). Colors in the plot may be difficult to distinguish.",
+                "Consider using a higher taxonomic level or abundance threshold."))
+}
+
+set.seed(924)  # for reproducibility
+if (ntaxa_abundant > 0) {
+  # use a broad set of seed colors
+  # the seed colors may not matter much, but they do influence ordering and can probably
+  # give your palettes a different style
+  # there are online palette generators you can use for experimenting with seed colors
+  seed_cols <- c("#e41a1c", 
+                 "#377eb8", 
+                 "#4daf4a", 
+                 "#984ea3", 
+                 "#ff7f00", 
+                 "#ffff33", 
+                 "#a65628", 
+                 "#f781bf", 
+                 "#999999")
+  abundant_colors_stack <- Polychrome::createPalette(ntaxa_abundant, seed_cols)
+  names(abundant_colors_stack) <- abundant_taxa_names
+  cat(sprintf("   Generated palette with %d distinct colors for stacked barplot.\n", length(abundant_colors_stack)))
+} else {
+  abundant_colors_stack <- character(0) # empty palette if no abundant taxa
+  cat("   No abundant taxa, stacked barplot palette will only contain minor taxa color.\n")
+}
+
+
+# add minor taxa color and create final palette (for stacked barplot)
+minor_taxa_color <- c("grey45")
+names(minor_taxa_color) <- minor_taxa_label
+final_colors_stack <- c(abundant_colors_stack, minor_taxa_color)
+
+# create palette for bubble plot based on bubble_color_col_name
+bubble_color_rank <- params$bubble_plot_taxonomic_level_color
+bubble_color_col_name <- paste0("bubble_color_", bubble_color_rank)
+
+bubble_color_groups <- levels(combined_df[[bubble_color_col_name]]) # get all unique groups including minor
+# remove the minor taxa group temporarily to generate palette for actual taxa ranks
+bubble_color_groups_taxa_only <- setdiff(bubble_color_groups, minor_taxa_color_group_label)
+n_bubble_color_groups_taxa <- length(bubble_color_groups_taxa_only)
+
+cat(sprintf("* Preparing color palette for %d groups based on rank '%s' (bubble plot).\n",
+            length(bubble_color_groups), bubble_color_rank))
+
+if (n_bubble_color_groups_taxa > 0) {
+  if (n_bubble_color_groups_taxa > 38) {
+    # this is unlikely to happen but might as well check
+    warning(paste("High number of coloring groups (", n_bubble_color_groups_taxa,
+                  ") for bubble plot based on rank '", bubble_color_rank,
+                  "'. Colors may be hard to distinguish."))
+  }
+  # i like a pastel look for the bubbles
+  seed_cols_bubble <- c("#a6cee3", 
+                        "#b2df8a", 
+                        "#fb9a99", 
+                        "#fdbf6f", 
+                        "#cab2d6", 
+                        "#ffff99")
+  bubble_colors_taxa <- Polychrome::createPalette(n_bubble_color_groups_taxa, seed_cols_bubble)
+  names(bubble_colors_taxa) <- bubble_color_groups_taxa_only
+  cat(sprintf("   Generated palette with %d distinct colors for taxa ranks.\n", length(bubble_colors_taxa)))
+} else {
+    bubble_colors_taxa <- character(0)
+    cat("   No specific taxa ranks found for coloring, only minor group.\n")
+}
+
+# add minor taxa group color (use the same grey as barplot)
+bubble_minor_color <- c("grey45")
+names(bubble_minor_color) <- minor_taxa_color_group_label
+final_colors_bubble <- c(bubble_colors_taxa, bubble_minor_color)
+
+# ensure the order matches the factor levels for the legend
+final_colors_bubble <- final_colors_bubble[bubble_color_groups]
+
+
+### prepare factors for plotting
+#   this might need some tweaking for your specific data
+cat("* Setting factor levels for plotting order...\n")
+# order taxa factors for stacking: abundant taxa first (sorted by mean abundance), then minor taxa
+stacking_order_levels <- c(abundant_taxa_names, minor_taxa_label)
+# ensure all OTU values in combined_df are in the levels
+combined_df$OTU <- factor(combined_df$OTU, levels = stacking_order_levels)
+
+# define desired *legend* order: abundant taxa (sorted) first, then minor taxa
+legend_order_breaks <- c(abundant_taxa_names, minor_taxa_label)
+
+# order samples based on sample data
+has_facet_column <- FALSE  # default
+has_sort_column <- FALSE   # default
+
+if (has_sample_data) {
+  # check if the specified columns actually exist in the combined_df (added during merge)
+  has_sort_column <- params$sample_sort_column %in% colnames(combined_df)
+  has_facet_column <- params$sample_type_column %in% colnames(combined_df)
+
+  if (has_sort_column) {
+    # get the sample order based on the sorting column
+    # need the original sample_data_df_orig for this
+    if (!exists("sample_data_df_orig")) {
+        sample_data_df_orig <- as_tibble(sample_data(ps), rownames = "Sample")
+    }
+
+    # Handle different data types for sorting (numeric, date, character)
+    sort_col_data <- sample_data_df_orig[[params$sample_sort_column]]
+    if (inherits(sort_col_data, "Date") || inherits(sort_col_data, "POSIXt")) {
+      # sort column is date
+      sample_order <- sample_data_df_orig %>% 
+        arrange(.data[[params$sample_sort_column]]) %>% 
+        pull(Sample)
+    } else if (is.numeric(sort_col_data)) {
+      # sort coumn is numeric
+       sample_order <- sample_data_df_orig %>% 
+         arrange(.data[[params$sample_sort_column]]) %>% 
+         pull(Sample)
+    } else {
+      # sort column is character - assume factor and sort alphabetically
+      sample_order <- sample_data_df_orig %>% 
+        arrange(as.character(.data[[params$sample_sort_column]])) %>% 
+        pull(Sample)
+    }
+    
+    # filter sample_order to only include samples present in combined_df
+    sample_order <- sample_order[sample_order %in% unique(combined_df$Sample)]
+    combined_df$Sample <- factor(combined_df$Sample, levels = sample_order)
+    cat(sprintf("   Ordered samples based on '%s'.\n", params$sample_sort_column))
+  } else {
+    warning(paste("Sample sort column '", params$sample_sort_column, 
+                  "' not found in combined data. Samples will be ordered alphabetically."))
+    combined_df$Sample <- factor(combined_df$Sample, 
+                                 levels = sort(unique(combined_df$Sample)))
+  }
+
+  # ensure facet column is a factor if it exists
+  if (has_facet_column) {
+    combined_df[[params$sample_type_column]] <- factor(combined_df[[params$sample_type_column]])
+    cat(sprintf("   Set '%s' as factor for faceting.\n", params$sample_type_column))
+  } else {
+    warning(paste("Sample type column '", params$sample_type_column, "' not found in combined data. Faceting will be skipped."))
+  }
+} else {
+  # If no sample data, order samples alphabetically
+  combined_df$Sample <- factor(combined_df$Sample, levels = sort(unique(combined_df$Sample)))
+  cat("   Ordered samples alphabetically (no sample data for sorting/faceting).\n")
+}
+
+
+### make the barplot
+cat("* Creating the stacked barplot...\n")
+barplot <- ggplot(combined_df, aes(x = Sample, y = Abundance, fill = OTU)) +
+  geom_bar(stat = "identity", position = "stack", color = "black", size = 0.15) +
+  scale_fill_manual(
+    values = final_colors_stack,
+    breaks = legend_order_breaks, # explicitly set legend order
+    labels = function(l) ifelse(l == minor_taxa_label, 
+                                paste0("Minor (<", params$min_abundance * 100, "%)"), 
+                                l), # rewrite minor label to include filtering level
+    drop = FALSE # keep all levels in the legend even if abundance is zero in plotted subset
+  ) +
+  theme_minimal(base_size = 11) +
+  labs(
+    title = if (params$plot_titles) { 
+      paste("Relative Abundance by Sample (Aggregated at", tax_level, "level)")
+    },
+    subtitle = if (params$plot_titles) { 
+      paste("Taxa shown if >", params$min_abundance * 100, 
+            "% relative abundance in any sample. Others grouped into 'Minor taxa'.")
+      },
+    x = if(has_sort_column) {
+        paste("Sample (ordered by", params$sample_sort_column, ")") 
+      } else { "Sample" },
+    y = "Relative Abundance",
+    fill = str_to_sentence(tax_level) # capitalize first letter in taxonomic rank
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 60, hjust = 1, size = rel(0.9)),
+    legend.position = "right",
+    legend.key.size = unit(0.8, "lines"),
+    legend.title = element_text(size = rel(0.9), face = "bold"),
+    legend.text = element_text(size = rel(0.85)),
+    strip.text = element_text(face = "bold", size=rel(1.0)),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank(),
+    plot.title = element_text(face="bold", size=rel(1.2)),
+    plot.subtitle = element_text(size=rel(0.9))
+  )
+
+# add faceting if sample type column is specified and exists
+if (has_facet_column && params$sample_type_column != "") {
+  cat(sprintf("   Adding faceting by '%s' to barplot.\n", params$sample_type_column))
+  # create formula for facet_grid
+  facet_formula <- as.formula(paste("~", params$sample_type_column))
+  barplot <- barplot + 
+    facet_grid(cols = vars(.data[[params$sample_type_column]]),
+               scales = "free_x", # allow x-axis to vary between facets
+               space = "free_x") # allow space allocated to vary
+}
+
+# display the barplot
+print(barplot)
+ggsave(file.path(input_dir, paste0("relative_abundance_barplot_", params$taxonomic_level, ".pdf")), plot=barplot, width=25, height=15, units="cm")
+cat("   Barplot saved.\n")
+
+
+### make the bubble plot
+cat("* Creating the bubble plot...\n")
+
+# filter out zero-abundance points for bubble plot clarity
+combined_df_bubble <- combined_df %>% filter(Abundance > 0)
+
+# ensure OTU is factor with correct levels for bubble plot y-axis
+combined_df_bubble$OTU <- factor(combined_df_bubble$OTU, levels = rev(stacking_order_levels)) # most abundant (overall) taxa on top
+
+# ensure the bubble color column is factor with correct levels
+combined_df_bubble[[bubble_color_col_name]] <- factor(combined_df_bubble[[bubble_color_col_name]], levels = bubble_color_groups)
+
+# reorder bubble_color_groups to keep alphabetical order but put minor taxa last
+bubble_color_groups_taxa_only <- setdiff(bubble_color_groups, minor_taxa_color_group_label)
+bubble_color_groups_taxa_only <- sort(bubble_color_groups_taxa_only)
+bubble_color_groups_reordered <- c(bubble_color_groups_taxa_only, minor_taxa_color_group_label)
+
+# update the factor levels with the new order
+combined_df_bubble[[bubble_color_col_name]] <- factor(combined_df_bubble[[bubble_color_col_name]], levels = bubble_color_groups_reordered)
+
+# reorder the colors to match the new order
+final_colors_bubble <- final_colors_bubble[bubble_color_groups]
+final_colors_bubble_reordered <- final_colors_bubble[bubble_color_groups_reordered]
+
+
+bubbleplot <- ggplot(combined_df_bubble, aes(x=Sample, y=OTU, size=Abundance, fill=.data[[bubble_color_col_name]])) + # use the dynamic color column name
+  geom_point(alpha = 0.8, color="black", shape=21) + # shape=21 allows black outline
+  scale_fill_manual(
+    name = str_to_sentence(params$bubble_plot_taxonomic_level_color),
+    values = final_colors_bubble_reordered,
+    breaks = bubble_color_groups_reordered, # use the reordered groups from the color rank column
+    labels = function(l) 
+      ifelse(l == minor_taxa_color_group_label, 
+             paste0("Minor (<", params$min_abundance * 100, "%)"), 
+             l), # nice label for minor group
+    guide = "legend",
+    drop = FALSE
+  ) +
+  scale_size_area(
+    max_size = 10,
+    name = "Relative\nAbundance (%)",
+    labels = scales::percent_format(accuracy = 1)
+  ) +
+  theme_minimal(base_size = 11) +
+  labs(
+    title = paste("Relative Abundance Bubble Plot (Aggregated at", tax_level, "level)"),
+    subtitle = paste("Bubble size indicates relative abundance (> 0%). Color indicates",
+                     params$bubble_plot_taxonomic_level_color, "rank."),
+    x = if(has_sort_column) { 
+        paste("Sample (ordered by", params$sample_sort_column, ")")
+      } else { "Sample" },
+    y = str_to_sentence(tax_level)
+    ) +
+    theme(
+      axis.text.x = element_text(angle = 60, hjust = 1, size = rel(0.9)),
+      axis.text.y = element_text(size = rel(0.9)),
+      legend.position = "right",
+      legend.key.size = unit(0.8, "lines"),
+      legend.title = element_text(size = rel(0.9), face = "bold"),
+      legend.text = element_text(size = rel(0.85)),
+      strip.text = element_text(face = "bold", size=rel(1.0)),
+      panel.grid.major = element_line(color = "grey90", size = 0.2),
+      panel.grid.minor = element_blank(),
+      plot.title = element_text(face="bold", size=rel(1.2)),
+      plot.subtitle = element_text(size=rel(0.9))
+    )
+
+# add faceting if sample type column is specified and exists
+if (has_facet_column && params$sample_type_column != "") {
+  cat(sprintf("   Adding faceting by '%s' to bubble plot.\n",
+              params$sample_type_column))
+  facet_formula <- as.formula(paste("~", params$sample_type_column))
+  bubbleplot <- bubbleplot + 
+    facet_grid(cols = vars(.data[[params$sample_type_column]]),
+               scales = "free_x",
+               space = "free_x")
+}
+
+# display the bubble plot
+print(bubbleplot)
+ggsave(file.path(input_dir, 
+                 paste0("relative_abundance_bubbleplot_", 
+                        params$taxonomic_level, "_color_",
+                        params$bubble_plot_taxonomic_level_color, ".pdf")), 
+       plot=bubbleplot, 
+       width=25, height=15 + ntaxa_abundant*0.2, 
+       units="cm", limitsize = FALSE)
+
+cat("   Bubble plot saved.\n")
+cat("--- Plotting Complete ---\n")
+
+```
