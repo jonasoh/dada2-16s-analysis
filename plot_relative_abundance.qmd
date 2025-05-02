@@ -277,8 +277,17 @@ if (!is.null(ps_merged_abundant)) {
                     }
                 }
             }
-            # construct name: "HigherRankName (rank)"
-            return(paste0(clean_name(higher_rank_val), " (", higher_rank_name, ")"))
+            
+            # If we couldn't find any identification at any rank
+            if (is.na(higher_rank_val) || higher_rank_val == "") {
+                # Use the first 6 characters of the OTU ID
+                otu_id <- tax_row[["OTU_ID"]]
+                otu_prefix <- substr(otu_id, 1, 6)
+                return(paste0("Unidentified (", otu_prefix, ")"))
+            } else {
+                # construct name: "HigherRankName (rank)"
+                return(paste0(clean_name(higher_rank_val), " (", higher_rank_name, ")"))
+            }
         } else {
             # target level is classified, just return its value
             return(clean_name(target_val))
