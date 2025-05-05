@@ -242,10 +242,10 @@ if (!is.null(ps_merged_abundant)) {
     
     # clean names - clean_name(name)
     #
-    # this function converts the _123 suffix to (123), if desired.
+    # this function converts the _123 suffix to [123], if desired.
     clean_name <- function(name) {
       if (params$clean_names) {
-        str_replace(name, "_(\\d+)$", " (\\1)")
+        str_replace(name, "_(\\d+)$", " [\\1]")
       } else {
         name
       }
