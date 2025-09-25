@@ -280,10 +280,22 @@ if (!is.null(ps_merged_abundant)) {
             
             # If we couldn't find any identification at any rank
             if (is.na(higher_rank_val) || higher_rank_val == "") {
-                # Use the first 6 characters of the OTU ID
+                # Use the first 6 characters of the OTU ID with a tracking system for duplicates
                 otu_id <- tax_row[["OTU_ID"]]
                 otu_prefix <- substr(otu_id, 1, 6)
-                return(paste0("Unidentified (", otu_prefix, ")"))
+                
+                # Create a unique prefix using a closure to track counts
+                if (!exists("unidentified_counts", envir = .GlobalEnv)) {
+                    assign("unidentified_counts", new.env(), envir = .GlobalEnv)
+                }
+                
+                if (!exists(otu_prefix, envir = unidentified_counts)) {
+                    unidentified_counts[[otu_prefix]] <- 1
+                    return(paste0("Unidentified"))
+                } else {
+                    unidentified_counts[[otu_prefix]] <- unidentified_counts[[otu_prefix]] + 1
+                    return(paste0("Unidentified [", unidentified_counts[[otu_prefix]], "]"))
+                }
             } else {
                 # construct name: "HigherRankName (rank)"
                 return(paste0(clean_name(higher_rank_val), " (", higher_rank_name, ")"))
@@ -782,5 +794,6 @@ ggsave(file.path(input_dir,
 
 cat("   Bubble plot saved.\n")
 cat("--- Plotting Complete ---\n")
-
 ```
+
+End of script.
