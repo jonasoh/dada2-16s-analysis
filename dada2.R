@@ -138,8 +138,8 @@ errF <- learnErrors(fwd_filt, multithread=multithread)
 errR <- learnErrors(rev_filt, multithread=multithread)
 
 # inspect results
-plotErrors(errF, nominalQ=TRUE)
-plotErrors(errR, nominalQ=TRUE)
+svg(filename=file.path("results","errors_fwd.svg") ); plotErrors(errF, nominalQ=TRUE); dev.off() 
+svg(filename=file.path("results","errors_rev.svg") ); plotErrors(errR, nominalQ=TRUE); dev.off()
 
 # let's find out who's there!
 dadaFs <- dada(fwd_filt, err=errF, multithread=multithread)
