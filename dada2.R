@@ -72,8 +72,10 @@ library(tictoc)
 # use multithreading only if we aren't on windows
 multithread <- if (.Platform$OS.type == "windows") FALSE else TRUE
 
+dir.create("results")
+
 # write some basic info to log file
-logfile <- file.path(input_dir, 'dada2_output.txt')
+logfile <- file.path("results", 'dada2_output.txt')
 
 pkg_versions <- c(
   dada2 = as.character(packageVersion("dada2")),
@@ -116,8 +118,8 @@ stopifnot(length(fwd_files) == length(rev_files))
 cat('Plotting aggregate quality stats...\n')
 pf <- plotQualityProfile(fwd_files, aggregate=T) + scale_x_continuous(breaks=seq(0,250,10))
 pr <- plotQualityProfile(rev_files, aggregate=T) + scale_x_continuous(breaks=seq(0,250,10))
-ggsave(plot=pf, filename = file.path(input_dir, "aggregate_quality_fwd.pdf"))
-ggsave(plot=pr, filename = file.path(input_dir, "aggregate_quality_rev.pdf"))
+ggsave(plot=pf, filename = file.path("results", "aggregate_quality_fwd.pdf"))
+ggsave(plot=pr, filename = file.path("results", "aggregate_quality_rev.pdf"))
 
 # we'll create the filtered files in the same dir as the raw ones
 fwd_filt <- sub("(_1\\.fastq(\\.gz)?)$", ".filtered\\1", fwd_files)
@@ -168,7 +170,7 @@ track[, "nonchim.ratio"] <- round(track[, "nonchim.ratio"], 3)
 rownames(track) <- sample.names
 
 # output the filter stats to the input dir
-write.table(track, file.path(input_dir, "filter_stats.tsv"), row.names=T, col.names=T, sep='\t')
+write.table(track, file.path("results", "filter_stats.tsv"), row.names=T, col.names=T, sep='\t')
 
 # use DECIPHER IDTAXA method for better inference
 # Murali, A., Bhargava, A. & Wright, E.S. IDTAXA: a novel approach for accurate
@@ -194,13 +196,13 @@ taxid <- t(sapply(ids, function(x) {
 colnames(taxid) <- ranks
 rownames(taxid) <- getSequences(seqtab.nochim)
 
-write.table(taxid, file.path(input_dir, "taxid.tsv"), row.names=T, col.names=T, sep='\t')
-saveRDS(seqtab.nochim, file.path(input_dir, "seqtab.nochim.rds"))
-saveRDS(seqtab, file.path(input_dir, "seqtab.rds"))
-saveRDS(taxid, file.path(input_dir, "taxa.rds"))
+write.table(taxid, file.path("results", "taxid.tsv"), row.names=T, col.names=T, sep='\t')
+saveRDS(seqtab.nochim, file.path("results", "seqtab.nochim.rds"))
+saveRDS(seqtab, file.path("results", "seqtab.rds"))
+saveRDS(taxid, file.path("results", "taxa.rds"))
 
 # note the running time
 toc()
 
 cat("DADA2 pipeline finished at: ", format(Sys.time()), "\n")
-cat("Files are written to: ", input_dir, "\n")
+cat("Files are written to: ", "results", "\n")
