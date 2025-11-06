@@ -27,7 +27,7 @@ truncQ<-2             # Default 2. Truncate reads at the first instance of a qua
 
 # taxonomic inference parameters
 # use the SILVA db from here: https://www2.decipher.codes/Downloads.html
-tax_db <- '/Users/j/Documents/Gasfermentering/RISE/DADA DB/SILVA_SSU_r138_2_2024.RData'
+tax_db <- '~/Projects/resources/SILVA_SSU_r138_2_2024.RData'
 
 # 16S files location
 if (.Platform$OS.type == 'unix') {
