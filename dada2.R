@@ -11,36 +11,10 @@
 
 rm(list=ls())
 
-##########################
-### TUNABLE PARAMETERS ###
-##########################
+####################################################
+### load required packages (install if necessary) ##
+####################################################
 
-# filterAndTrim parameters
-truncLen<-c(220,210)  # Default 0 (no truncation). Truncate reads after truncLen
-                      # bases. Reads shorter than this are discarded.
-maxEE<-c(2,2)         # Default Inf (no EE filtering). After truncation, reads with 
-                      # higher than maxEE "expected errors" will be discarded.
-                      # Expected errors are calculated from the nominal definition 
-                      # of the quality score: EE = sum(10^(-Q/10))
-truncQ<-2             # Default 2. Truncate reads at the first instance of a quality 
-                      # score less than or equal to truncQ.
-
-# taxonomic inference parameters
-# use the SILVA db from here: https://www2.decipher.codes/Downloads.html
-tax_db <- '~/Projects/resources/SILVA_SSU_r138_2_2024.RData'
-
-# 16S files location
-if (.Platform$OS.type == 'unix') {
-  input_dir <- readline(prompt = "Enter directory to process: ")
-} else {
-  input_dir <- choose.dir(getwd(), "Choose folder to process")
-}
-
-###########################
-### ACTUAL SCRIPT BELOW ###
-###########################
-
-# load required packages (install if necessary)
 install_if_needed <- function(pkg, bioc = FALSE) {
   if (!requireNamespace(pkg, quietly = TRUE)) {
     if (bioc) {
@@ -68,6 +42,31 @@ library(DECIPHER)
 library(phangorn)
 library(ggplot2)
 library(tictoc)
+
+##########################
+### TUNABLE PARAMETERS ###
+##########################
+
+# 16S files location
+input_dir <- "../sequences__trimmed/"
+
+# filterAndTrim parameters
+truncLen<-0           # Default 0 (no truncation). Truncate reads after truncLen
+                      # bases. Reads shorter than this are discarded.
+maxEE<-c(2)           # Default Inf (no EE filtering). After truncation, reads with 
+                      # higher than maxEE "expected errors" will be discarded.
+                      # Expected errors are calculated from the nominal definition 
+                      # of the quality score: EE = sum(10^(-Q/10))
+truncQ<-2             # Default 2. Truncate reads at the first instance of a quality 
+                      # score less than or equal to truncQ.
+
+# taxonomic inference parameters
+# use the SILVA db from here: https://www2.decipher.codes/Downloads.html
+tax_db <- '~/Projects/resources/SILVA_SSU_r138_2_2024.RData'
+
+###########################
+### ACTUAL SCRIPT BELOW ###
+###########################
 
 # use multithreading only if we aren't on windows
 multithread <- if (.Platform$OS.type == "windows") FALSE else TRUE
