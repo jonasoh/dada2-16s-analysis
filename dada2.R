@@ -36,6 +36,7 @@ install_if_needed("phangorn", bioc=T)
 install_if_needed("ggplot2", bioc=F)
 install_if_needed("tictoc", bioc=F)
 
+library(parallel)
 library(dada2)
 library(phyloseq)
 library(DECIPHER)
@@ -49,6 +50,9 @@ library(tictoc)
 
 # 16S files location
 input_dir <- "../sequences__trimmed/"
+
+# set number of computational cores / CPUs used
+n_cores <- detectCores()
 
 # filterAndTrim parameters
 truncLen<-0           # Default 0 (no truncation). Truncate reads after truncLen
@@ -69,7 +73,7 @@ tax_db <- '~/Projects/resources/SILVA_SSU_r138_2_2024.RData'
 ###########################
 
 # use multithreading only if we aren't on windows
-multithread <- if (.Platform$OS.type == "windows") FALSE else TRUE
+multithread <- if (.Platform$OS.type == "windows") FALSE else n_cores
 
 dir.create("results")
 
@@ -181,7 +185,7 @@ load(tax_db)
 
 # create a DNAStringSet from the ASVs
 dna <- DNAStringSet(getSequences(seqtab.nochim))
-ids <- IdTaxa(dna, trainingSet, strand="top", processors=NULL, verbose=FALSE) # processors=NULL means use all processors
+ids <- IdTaxa(dna, trainingSet, strand="top", processors=n_cores, verbose=FALSE) # processors=NULL means use all processors
 ranks <- c("domain", "phylum", "class", "order", "family", "genus")
 
 # convert the output object of class "Taxa" to a matrix analogous to the output from assignTaxonomy
