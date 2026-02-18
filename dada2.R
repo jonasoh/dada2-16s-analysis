@@ -49,7 +49,9 @@ library(tictoc)
 ##########################
 
 # 16S files location
-input_dir <- "../sequences__trimmed/"
+input_dir <- "../16S_sequences/"
+
+output_dir <- paste0(input_dir,"DADA2_output/")  
 
 # set number of computational cores / CPUs used
 n_cores <- detectCores()
@@ -75,10 +77,10 @@ tax_db <- '~/Projects/resources/SILVA_SSU_r138_2_2024.RData'
 # use multithreading only if we aren't on windows
 multithread <- if (.Platform$OS.type == "windows") FALSE else n_cores
 
-dir.create("results")
+dir.create(output_dir)
 
 # write some basic info to log file
-logfile <- file.path("results", 'dada2_output.txt')
+logfile <- file.path(output_dir, 'dada2_output.txt')
 
 pkg_versions <- c(
   dada2 = as.character(packageVersion("dada2")),
@@ -121,7 +123,7 @@ stopifnot(length(fwd_files) == length(rev_files))
 cat('Plotting aggregate quality stats...\n')
 pf <- plotQualityProfile(fwd_files, aggregate=T) + scale_x_continuous(breaks=seq(0,250,10))
 pr <- plotQualityProfile(rev_files, aggregate=T) + scale_x_continuous(breaks=seq(0,250,10))
-ggsave(plot=pf, filename = file.path("results", "aggregate_quality_fwd.pdf"))
+ggsave(plot=pf, filename = file.path(output_dir, "aggregate_quality_fwd.pdf"))
 ggsave(plot=pr, filename = file.path("results", "aggregate_quality_rev.pdf"))
 
 # we'll create the filtered files in the same dir as the raw ones
@@ -143,8 +145,8 @@ errF <- learnErrors(fwd_filt, multithread=multithread)
 errR <- learnErrors(rev_filt, multithread=multithread)
 
 # inspect results
-svg(filename=file.path("results","errors_fwd.svg") ); plotErrors(errF, nominalQ=TRUE); dev.off() 
-svg(filename=file.path("results","errors_rev.svg") ); plotErrors(errR, nominalQ=TRUE); dev.off()
+svg(filename=file.path(output_dir,"errors_fwd.svg") ); plotErrors(errF, nominalQ=TRUE); dev.off() 
+svg(filename=file.path(output_dir,"errors_rev.svg") ); plotErrors(errR, nominalQ=TRUE); dev.off()
 
 # let's find out who's there!
 dadaFs <- dada(fwd_filt, err=errF, multithread=multithread)
@@ -199,10 +201,10 @@ taxid <- t(sapply(ids, function(x) {
 colnames(taxid) <- ranks
 rownames(taxid) <- getSequences(seqtab.nochim)
 
-write.table(taxid, file.path("results", "taxid.tsv"), row.names=T, col.names=T, sep='\t')
-saveRDS(seqtab.nochim, file.path("results", "seqtab.nochim.rds"))
-saveRDS(seqtab, file.path("results", "seqtab.rds"))
-saveRDS(taxid, file.path("results", "taxa.rds"))
+write.table(taxid, file.path(output_dir, "taxid.tsv"), row.names=T, col.names=T, sep='\t')
+saveRDS(seqtab.nochim, file.path(output_dir, "seqtab.nochim.rds"))
+saveRDS(seqtab, file.path(output_dir, "seqtab.rds"))
+saveRDS(taxid, file.path(output_dir, "taxa.rds"))
 
 # note the running time
 toc()
