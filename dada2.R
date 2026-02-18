@@ -11,36 +11,10 @@
 
 rm(list=ls())
 
-##########################
-### TUNABLE PARAMETERS ###
-##########################
+####################################################
+### load required packages (install if necessary) ##
+####################################################
 
-# filterAndTrim parameters
-truncLen<-c(220,210)  # Default 0 (no truncation). Truncate reads after truncLen
-                      # bases. Reads shorter than this are discarded.
-maxEE<-c(2,2)         # Default Inf (no EE filtering). After truncation, reads with 
-                      # higher than maxEE "expected errors" will be discarded.
-                      # Expected errors are calculated from the nominal definition 
-                      # of the quality score: EE = sum(10^(-Q/10))
-truncQ<-2             # Default 2. Truncate reads at the first instance of a quality 
-                      # score less than or equal to truncQ.
-
-# taxonomic inference parameters
-# use the SILVA db from here: https://www2.decipher.codes/Downloads.html
-tax_db <- '/Users/j/Documents/Gasfermentering/RISE/DADA DB/SILVA_SSU_r138_2_2024.RData'
-
-# 16S files location
-if (.Platform$OS.type == 'unix') {
-  input_dir <- readline(prompt = "Enter directory to process: ")
-} else {
-  input_dir <- choose.dir(getwd(), "Choose folder to process")
-}
-
-###########################
-### ACTUAL SCRIPT BELOW ###
-###########################
-
-# load required packages (install if necessary)
 install_if_needed <- function(pkg, bioc = FALSE) {
   if (!requireNamespace(pkg, quietly = TRUE)) {
     if (bioc) {
@@ -62,6 +36,7 @@ install_if_needed("phangorn", bioc=T)
 install_if_needed("ggplot2", bioc=F)
 install_if_needed("tictoc", bioc=F)
 
+library(parallel)
 library(dada2)
 library(phyloseq)
 library(DECIPHER)
@@ -69,11 +44,52 @@ library(phangorn)
 library(ggplot2)
 library(tictoc)
 
+##########################
+### TUNABLE PARAMETERS ###
+##########################
+
+# 16S files location
+# if not set, ask the user for input directory
+#input_dir <- "../16S_sequences/"
+
+output_dir <- file.path(input_dir, "DADA2_output/")  
+
+# set number of computational cores / CPUs used
+n_cores <- detectCores()
+
+# filterAndTrim parameters
+truncLen<-0           # Default 0 (no truncation). Truncate reads after truncLen
+                      # bases. Reads shorter than this are discarded.
+maxEE<-c(2)           # Default Inf (no EE filtering). After truncation, reads with 
+                      # higher than maxEE "expected errors" will be discarded.
+                      # Expected errors are calculated from the nominal definition 
+                      # of the quality score: EE = sum(10^(-Q/10))
+truncQ<-2             # Default 2. Truncate reads at the first instance of a quality 
+                      # score less than or equal to truncQ.
+
+# taxonomic inference parameters
+# use the SILVA db from here: https://www2.decipher.codes/Downloads.html
+tax_db <- '~/Projects/resources/SILVA_SSU_r138_2_2024.RData'
+
+###########################
+### ACTUAL SCRIPT BELOW ###
+###########################
+
+if (!exists('input_dir')) {
+  if (.Platform$OS.type == 'unix') {
+    input_dir <- readline(prompt = "Enter directory to process: ")
+  } else {
+    input_dir <- choose.dir(getwd(), "Choose folder to process")
+  }
+}
+
 # use multithreading only if we aren't on windows
-multithread <- if (.Platform$OS.type == "windows") FALSE else TRUE
+multithread <- if (.Platform$OS.type == "windows") FALSE else n_cores
+
+dir.create(output_dir)
 
 # write some basic info to log file
-logfile <- file.path(input_dir, 'dada2_output.txt')
+logfile <- file.path(output_dir, 'dada2_output.txt')
 
 pkg_versions <- c(
   dada2 = as.character(packageVersion("dada2")),
@@ -116,8 +132,8 @@ stopifnot(length(fwd_files) == length(rev_files))
 cat('Plotting aggregate quality stats...\n')
 pf <- plotQualityProfile(fwd_files, aggregate=T) + scale_x_continuous(breaks=seq(0,250,10))
 pr <- plotQualityProfile(rev_files, aggregate=T) + scale_x_continuous(breaks=seq(0,250,10))
-ggsave(plot=pf, filename = file.path(input_dir, "aggregate_quality_fwd.pdf"))
-ggsave(plot=pr, filename = file.path(input_dir, "aggregate_quality_rev.pdf"))
+ggsave(plot=pf, filename = file.path(output_dir, "aggregate_quality_fwd.pdf"))
+ggsave(plot=pr, filename = file.path(output_dir, "aggregate_quality_rev.pdf"))
 
 # we'll create the filtered files in the same dir as the raw ones
 fwd_filt <- sub("(_1\\.fastq(\\.gz)?)$", ".filtered\\1", fwd_files)
@@ -138,8 +154,8 @@ errF <- learnErrors(fwd_filt, multithread=multithread)
 errR <- learnErrors(rev_filt, multithread=multithread)
 
 # inspect results
-plotErrors(errF, nominalQ=TRUE)
-plotErrors(errR, nominalQ=TRUE)
+svg(filename=file.path(output_dir, "errors_fwd.svg") ); plotErrors(errF, nominalQ=TRUE); dev.off() 
+svg(filename=file.path(output_dir, "errors_rev.svg") ); plotErrors(errR, nominalQ=TRUE); dev.off()
 
 # let's find out who's there!
 dadaFs <- dada(fwd_filt, err=errF, multithread=multithread)
@@ -168,7 +184,7 @@ track[, "nonchim.ratio"] <- round(track[, "nonchim.ratio"], 3)
 rownames(track) <- sample.names
 
 # output the filter stats to the input dir
-write.table(track, file.path(input_dir, "filter_stats.tsv"), row.names=T, col.names=T, sep='\t')
+write.table(track, file.path(output_dir, "filter_stats.tsv"), row.names=T, col.names=T, sep='\t')
 
 # use DECIPHER IDTAXA method for better inference
 # Murali, A., Bhargava, A. & Wright, E.S. IDTAXA: a novel approach for accurate
@@ -180,7 +196,7 @@ load(tax_db)
 
 # create a DNAStringSet from the ASVs
 dna <- DNAStringSet(getSequences(seqtab.nochim))
-ids <- IdTaxa(dna, trainingSet, strand="top", processors=NULL, verbose=FALSE) # processors=NULL means use all processors
+ids <- IdTaxa(dna, trainingSet, strand="top", processors=n_cores, verbose=FALSE) # processors=NULL means use all processors
 ranks <- c("domain", "phylum", "class", "order", "family", "genus")
 
 # convert the output object of class "Taxa" to a matrix analogous to the output from assignTaxonomy
@@ -194,13 +210,13 @@ taxid <- t(sapply(ids, function(x) {
 colnames(taxid) <- ranks
 rownames(taxid) <- getSequences(seqtab.nochim)
 
-write.table(taxid, file.path(input_dir, "taxid.tsv"), row.names=T, col.names=T, sep='\t')
-saveRDS(seqtab.nochim, file.path(input_dir, "seqtab.nochim.rds"))
-saveRDS(seqtab, file.path(input_dir, "seqtab.rds"))
-saveRDS(taxid, file.path(input_dir, "taxa.rds"))
+write.table(taxid, file.path(output_dir, "taxid.tsv"), row.names=T, col.names=T, sep='\t')
+saveRDS(seqtab.nochim, file.path(output_dir, "seqtab.nochim.rds"))
+saveRDS(seqtab, file.path(output_dir, "seqtab.rds"))
+saveRDS(taxid, file.path(output_dir, "taxa.rds"))
 
 # note the running time
 toc()
 
 cat("DADA2 pipeline finished at: ", format(Sys.time()), "\n")
-cat("Files are written to: ", input_dir, "\n")
+cat("Files are written to: ", "results", "\n")
