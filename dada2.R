@@ -52,7 +52,9 @@ library(tictoc)
 # if not set, ask the user for input directory
 #input_dir <- "../16S_sequences/"
 
-output_dir <- file.path(input_dir, "DADA2_output/")  
+# output directory
+# if not set, use DADA2_output/ relative to the input directory
+#output_dir <- "~/Documents/dada2"
 
 # set number of computational cores / CPUs used
 n_cores <- detectCores()
@@ -82,6 +84,7 @@ if (!exists('input_dir')) {
     input_dir <- choose.dir(getwd(), "Choose folder to process")
   }
 }
+if (!exists('output_dir')) output_dir <- file.path(input_dir, "DADA2_output/")  
 
 # use multithreading only if we aren't on windows
 multithread <- if (.Platform$OS.type == "windows") FALSE else n_cores
