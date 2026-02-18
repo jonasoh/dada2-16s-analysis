@@ -49,9 +49,10 @@ library(tictoc)
 ##########################
 
 # 16S files location
-input_dir <- "../16S_sequences/"
+# if not set, ask the user for input directory
+#input_dir <- "../16S_sequences/"
 
-output_dir <- paste0(input_dir,"DADA2_output/")  
+output_dir <- file.path(input_dir, "DADA2_output/")  
 
 # set number of computational cores / CPUs used
 n_cores <- detectCores()
@@ -73,6 +74,14 @@ tax_db <- '~/Projects/resources/SILVA_SSU_r138_2_2024.RData'
 ###########################
 ### ACTUAL SCRIPT BELOW ###
 ###########################
+
+if (!exists('input_dir')) {
+  if (.Platform$OS.type == 'unix') {
+    input_dir <- readline(prompt = "Enter directory to process: ")
+  } else {
+    input_dir <- choose.dir(getwd(), "Choose folder to process")
+  }
+}
 
 # use multithreading only if we aren't on windows
 multithread <- if (.Platform$OS.type == "windows") FALSE else n_cores
@@ -124,7 +133,7 @@ cat('Plotting aggregate quality stats...\n')
 pf <- plotQualityProfile(fwd_files, aggregate=T) + scale_x_continuous(breaks=seq(0,250,10))
 pr <- plotQualityProfile(rev_files, aggregate=T) + scale_x_continuous(breaks=seq(0,250,10))
 ggsave(plot=pf, filename = file.path(output_dir, "aggregate_quality_fwd.pdf"))
-ggsave(plot=pr, filename = file.path("results", "aggregate_quality_rev.pdf"))
+ggsave(plot=pr, filename = file.path(output_dir, "aggregate_quality_rev.pdf"))
 
 # we'll create the filtered files in the same dir as the raw ones
 fwd_filt <- sub("(_1\\.fastq(\\.gz)?)$", ".filtered\\1", fwd_files)
@@ -145,8 +154,8 @@ errF <- learnErrors(fwd_filt, multithread=multithread)
 errR <- learnErrors(rev_filt, multithread=multithread)
 
 # inspect results
-svg(filename=file.path(output_dir,"errors_fwd.svg") ); plotErrors(errF, nominalQ=TRUE); dev.off() 
-svg(filename=file.path(output_dir,"errors_rev.svg") ); plotErrors(errR, nominalQ=TRUE); dev.off()
+svg(filename=file.path(output_dir, "errors_fwd.svg") ); plotErrors(errF, nominalQ=TRUE); dev.off() 
+svg(filename=file.path(output_dir, "errors_rev.svg") ); plotErrors(errR, nominalQ=TRUE); dev.off()
 
 # let's find out who's there!
 dadaFs <- dada(fwd_filt, err=errF, multithread=multithread)
@@ -175,7 +184,7 @@ track[, "nonchim.ratio"] <- round(track[, "nonchim.ratio"], 3)
 rownames(track) <- sample.names
 
 # output the filter stats to the input dir
-write.table(track, file.path("results", "filter_stats.tsv"), row.names=T, col.names=T, sep='\t')
+write.table(track, file.path(output_dir, "filter_stats.tsv"), row.names=T, col.names=T, sep='\t')
 
 # use DECIPHER IDTAXA method for better inference
 # Murali, A., Bhargava, A. & Wright, E.S. IDTAXA: a novel approach for accurate
