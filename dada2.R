@@ -89,7 +89,7 @@ if (!exists('output_dir')) output_dir <- file.path(input_dir, "DADA2_output/")
 # use multithreading only if we aren't on windows
 multithread <- if (.Platform$OS.type == "windows") FALSE else n_cores
 
-dir.create(output_dir, showWarnings=FALSE)
+dir.create(output_dir, showWarnings=FALSE, recursive=TRUE)
 
 # write some basic info to log file
 logfile <- file.path(output_dir, 'dada2_output.txt')
