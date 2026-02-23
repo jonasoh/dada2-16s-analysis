@@ -4,7 +4,7 @@
 # with adapters removed. each sample should be in its own directory <SAMPLE NAME>,
 # and files containing reads should be named <SAMPLE NAME>_<1/2>.fastq(.gz)
 #
-# the script will produce filtered reads in the sample directories named
+# the script will produce filtered reads in the sample directory, named
 # <SAMPLE NAME>.filtered_<1/2>.fastq.gz
 #
 # this script is based on the DADA2 tutorial: https://benjjneb.github.io/dada2/tutorial.html
@@ -201,7 +201,7 @@ load(tax_db)
 
 # create a DNAStringSet from the ASVs
 dna <- DNAStringSet(getSequences(seqtab.nochim))
-ids <- IdTaxa(dna, trainingSet, strand="top", processors=n_cores, verbose=FALSE) # processors=NULL means use all processors
+ids <- IdTaxa(dna, trainingSet, strand="both", processors=n_cores, verbose=FALSE) # processors=NULL means use all processors
 ranks <- c("domain", "phylum", "class", "order", "family", "genus")
 
 # convert the output object of class "Taxa" to a matrix analogous to the output from assignTaxonomy
