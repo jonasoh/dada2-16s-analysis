@@ -224,4 +224,4 @@ saveRDS(taxid, file.path(output_dir, "taxa.rds"))
 toc()
 
 cat("DADA2 pipeline finished at: ", format(Sys.time()), "\n")
-cat("Files are written to: ", "results", "\n")
+cat("Files are written to: ", output_dir, "\n")
