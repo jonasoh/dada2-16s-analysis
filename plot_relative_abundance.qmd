@@ -18,11 +18,11 @@ params:
   bubble_plot_taxonomic_level_color: "phylum"
   min_abundance: 0.025
   # do we want to agglomerate taxa at the specified level?
-  agglomerate: true
+  agglomerate: false
   # include title and subtitle in plot?
-  plot_titles: true
+  plot_titles: false
   # should we rename e.g., Methanobacteriales_2 to Methanobacteriales (2)?
-  clean_names: true
+  clean_names: false
   # file with additional sample metadata
   #   structure of the file:
   #   sample name in first column, metadata in other columns
@@ -251,6 +251,9 @@ if (!is.null(ps_merged_abundant)) {
       }
     }
 
+    # initialize counter for unidentified taxa before calling get_display_name
+    unidentified_counter <- 0
+    
     # create display names - get_display_name(tax_row, target_level, all_ranks)
     # 
     # this function looks for the lowest rank with an identifier. 
@@ -262,7 +265,7 @@ if (!is.null(ps_merged_abundant)) {
         target_rank_idx <- which(all_ranks == target_level)
 
         # check whether we have an identification at the specified rank
-        if (is.na(target_val) || target_val == "") {
+        if (is.na(target_val) || target_val == "" || grepl('^Incertae Sedis', target_val)) {
             # find the closest higher rank that IS classified
             higher_rank_val <- NA
             higher_rank_name <- NA
@@ -270,7 +273,7 @@ if (!is.null(ps_merged_abundant)) {
                 for (i in (target_rank_idx - 1):1) {
                     rank_to_check <- all_ranks[i]
                     val_to_check <- tax_row[[rank_to_check]]
-                    if (!is.na(val_to_check) && val_to_check != "") {
+                    if (!is.na(val_to_check) && val_to_check != "" && !grepl('^Incertae Sedis', val_to_check)) {
                         higher_rank_val <- val_to_check
                         higher_rank_name <- rank_to_check
                         break  # found it
@@ -280,22 +283,9 @@ if (!is.null(ps_merged_abundant)) {
             
             # If we couldn't find any identification at any rank
             if (is.na(higher_rank_val) || higher_rank_val == "") {
-                # Use the first 6 characters of the OTU ID with a tracking system for duplicates
-                otu_id <- tax_row[["OTU_ID"]]
-                otu_prefix <- substr(otu_id, 1, 6)
-                
-                # Create a unique prefix using a closure to track counts
-                if (!exists("unidentified_counts", envir = .GlobalEnv)) {
-                    assign("unidentified_counts", new.env(), envir = .GlobalEnv)
-                }
-                
-                if (!exists(otu_prefix, envir = unidentified_counts)) {
-                    unidentified_counts[[otu_prefix]] <- 1
-                    return(paste0("Unidentified"))
-                } else {
-                    unidentified_counts[[otu_prefix]] <- unidentified_counts[[otu_prefix]] + 1
-                    return(paste0("Unidentified [", unidentified_counts[[otu_prefix]], "]"))
-                }
+                # Increment counter and return numbered "Unidentified"
+                unidentified_counter <<- unidentified_counter + 1
+                return(paste0("Unidentified [", unidentified_counter, "]"))
             } else {
                 # construct name: "HigherRankName (rank)"
                 return(paste0(clean_name(higher_rank_val), " (", higher_rank_name, ")"))
@@ -737,8 +727,8 @@ bubbleplot <- ggplot(combined_df_bubble, aes(x=Sample, y=OTU, size=Abundance, fi
     breaks = bubble_color_groups_reordered, # use the reordered groups from the color rank column
     labels = function(l) 
       ifelse(l == minor_taxa_color_group_label, 
-             paste0("Minor (<", params$min_abundance * 100, "%)"), 
-             l), # nice label for minor group
+             paste0("Minor/Unknown"), 
+             l),
     guide = "legend",
     drop = FALSE
   ) +
@@ -749,9 +739,13 @@ bubbleplot <- ggplot(combined_df_bubble, aes(x=Sample, y=OTU, size=Abundance, fi
   ) +
   theme_minimal(base_size = 11) +
   labs(
-    title = paste("Relative Abundance Bubble Plot (Aggregated at", tax_level, "level)"),
-    subtitle = paste("Bubble size indicates relative abundance (> 0%). Color indicates",
-                     params$bubble_plot_taxonomic_level_color, "rank."),
+    title = if (params$plot_titles) {
+      paste("Relative Abundance Bubble Plot (Aggregated at", tax_level, "level)")
+      },
+    subtitle = if (params$plot_titles) {
+      paste("Bubble size indicates relative abundance (> 0%). Color indicates",
+                     params$bubble_plot_taxonomic_level_color, "rank.")
+      },
     x = if(has_sort_column) { 
         paste("Sample (ordered by", params$sample_sort_column, ")")
       } else { "Sample" },
