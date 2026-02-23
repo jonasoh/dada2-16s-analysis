@@ -87,7 +87,7 @@ if (!exists('input_dir')) {
 if (!exists('output_dir')) output_dir <- file.path(input_dir, "DADA2_output/")  
 
 # use multithreading only if we aren't on windows
-multithread <- if (.Platform$OS.type == "windows") FALSE else n_cores
+multithread <- if (.Platform$OS.type == "windows") FALSE else max(n_cores-1, 1)
 
 dir.create(output_dir, showWarnings=FALSE, recursive=TRUE)
 
