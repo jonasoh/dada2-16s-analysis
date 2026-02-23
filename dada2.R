@@ -219,6 +219,7 @@ write.table(taxid, file.path(output_dir, "taxid.tsv"), row.names=T, col.names=T,
 saveRDS(seqtab.nochim, file.path(output_dir, "seqtab.nochim.rds"))
 saveRDS(seqtab, file.path(output_dir, "seqtab.rds"))
 saveRDS(taxid, file.path(output_dir, "taxa.rds"))
+saveRDS(ids, file.path(output_dir, "ids.rds"))
 
 # note the running time
 toc()
