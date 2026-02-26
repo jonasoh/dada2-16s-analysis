@@ -12,7 +12,7 @@ execute:
   warning: true
   message: true
 params:
-  input_dir: "/Users/j/Documents/Gasfermentering/RISE/16S data"
+  input_dir: "/Users/j/Documents/dada2/at_gtdb202"
   taxonomic_level: "genus"
   # color the bubble plot according to this taxonomic rank
   bubble_plot_taxonomic_level_color: "phylum"
@@ -99,6 +99,11 @@ input_dir <- params$input_dir
 
 seqtab.nochim <- readRDS(file.path(input_dir, 'seqtab.nochim.rds'))
 taxa <- readRDS(file.path(input_dir, 'taxa.rds'))
+
+# normalize tazxonomic ranks to use lower-case
+# (differs between databases)
+colnames(taxa) <- tolower(colnames(taxa))
+
 sample.names <- rownames(seqtab.nochim)
 
 # load the sample data if requested and check formatting
@@ -236,7 +241,7 @@ cat("* Generating unique display names for agglomerated taxa groups...\n")
 if (!is.null(ps_merged_abundant)) {
     tax_table_merged_mat <- as(tax_table(ps_merged_abundant), "matrix")
     tax_table_merged <- as_tibble(tax_table_merged_mat, rownames = "OTU_ID") # keep original OTU IDs from tax_glom
-
+    
     # filter to ranks actually present in the data
     tax_ranks_present <- intersect(tax_ranks_ordered, colnames(tax_table_merged))
     
