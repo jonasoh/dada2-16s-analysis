@@ -10,39 +10,20 @@
 # this script is based on the DADA2 tutorial: https://benjjneb.github.io/dada2/tutorial.html
 
 rm(list=ls())
+if (!requireNamespace("pak", quietly = TRUE)) install.packages("pak")
 
 ####################################################
 ### load required packages (install if necessary) ##
 ####################################################
 
-install_if_needed <- function(pkg, bioc = FALSE) {
-  if (!requireNamespace(pkg, quietly = TRUE)) {
-    if (bioc) {
-      BiocManager::install(pkg)
-    } else {
-      install.packages(pkg)
-    }
-  }
+install_and_load <- function(pkgs) {
+  to_install <- pkgs[!sapply(pkgs, requireNamespace, quietly = TRUE)]
+  if (length(to_install) > 0)
+    pak::pkg_install(to_install)
+  invisible(lapply(pkgs, library, character.only = TRUE))
 }
 
-# ensure BiocManager is installed first
-install_if_needed("BiocManager")
-
-# bioconductor packages
-install_if_needed("dada2", bioc=T)
-install_if_needed("phyloseq", bioc=T)
-install_if_needed("DECIPHER", bioc=T)
-install_if_needed("phangorn", bioc=T)
-install_if_needed("ggplot2", bioc=F)
-install_if_needed("tictoc", bioc=F)
-
-library(parallel)
-library(dada2)
-library(phyloseq)
-library(DECIPHER)
-library(phangorn)
-library(ggplot2)
-library(tictoc)
+install_and_load(c("parallel", "dada2", "phyloseq", "DECIPHER", "phangorn", "ggplot2", "tictoc"))
 
 ##########################
 ### TUNABLE PARAMETERS ###
@@ -71,7 +52,10 @@ truncQ<-2             # Default 2. Truncate reads at the first instance of a qua
 
 # taxonomic inference parameters
 # use the SILVA db from here: https://www2.decipher.codes/Downloads.html
-tax_db <- '~/Projects/resources/SILVA_SSU_r138_2_2024.RData'
+tax_db <- '~/Projects/resources/SILVA_SSU_r138.2_v2.RData'
+
+# or the GTDB one:
+#tax_db <- '~/Projects/resources/GTDB_r226_classifier.RData'
 
 ###########################
 ### ACTUAL SCRIPT BELOW ###
