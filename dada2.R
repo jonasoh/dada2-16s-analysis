@@ -43,7 +43,7 @@ n_cores <- detectCores()
 # filterAndTrim parameters
 truncLen<-0           # Default 0 (no truncation). Truncate reads after truncLen
                       # bases. Reads shorter than this are discarded.
-maxEE<-c(2)           # Default Inf (no EE filtering). After truncation, reads with 
+maxEE<-Inf            # Default Inf (no EE filtering). After truncation, reads with 
                       # higher than maxEE "expected errors" will be discarded.
                       # Expected errors are calculated from the nominal definition 
                       # of the quality score: EE = sum(10^(-Q/10))
